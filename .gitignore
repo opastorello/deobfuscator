@@ -24,3 +24,6 @@ dependency-reduced-pom.xml
 !/mvnw
 !/mvnw.cmd
 !/.mvn/
+
+# JVM crash logs
+hs_err_pid*.log
