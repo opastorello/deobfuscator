@@ -20,6 +20,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Modifier;
+import java.net.URI;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.stream.Stream;
 import java.util.AbstractMap.SimpleEntry;
 import java.util.*;
 import java.util.Map.Entry;
@@ -122,15 +128,19 @@ public class Deobfuscator {
     private Map<String, ClassNode> loadClasspathFile(File file, boolean skipCode) throws IOException {
         Map<String, ClassNode> map = new HashMap<>();
 
-        ZipFile zipIn = new ZipFile(file);
-        Enumeration<? extends ZipEntry> entries = zipIn.entries();
-        while (entries.hasMoreElements()) {
-            ZipEntry ent = entries.nextElement();
-            if (ent.getName().endsWith(".class")) {
+        try (ZipFile zipIn = new ZipFile(file)) {
+            Enumeration<? extends ZipEntry> entries = zipIn.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry ent = entries.nextElement();
+                if (ent.isDirectory() || !ent.getName().endsWith(".class") || ent.getName().endsWith("module-info.class")) {
+                    continue;
+                }
                 try {
                     ClassReader reader = new ClassReader(zipIn.getInputStream(ent));
                     ClassNode node = new ClassNode();
-                    reader.accept(node, (skipCode ? 0 : 0) | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                    // Method bodies of classpath entries are never executed or transformed, only their
+                    // hierarchy/signatures are consulted (see pullFromRuntime), so skip them to save memory.
+                    reader.accept(node, (skipCode ? ClassReader.SKIP_CODE : 0) | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
                     map.put(node.name, node);
 
                     setConstantPool(node, new ConstantPool(reader));
@@ -139,38 +149,114 @@ public class Deobfuscator {
                 }
             }
         }
-        zipIn.close();
 
         return map;
+    }
+
+    /**
+     * Loads the class library of a modular JDK (9+) through the {@code jrt:/} filesystem.
+     * Only the modules matching {@link Configuration#getRuntimeModules()} (default: every {@code java.*} module,
+     * i.e. the public Java SE API) are read; {@code jdk.*} modules are pulled lazily on demand by
+     * {@link #pullFromRuntime(String)} should an input class reference them.
+     *
+     * @param javaHome the JDK/JRE home to read from, or {@code null} for the currently running runtime
+     */
+    private Map<String, ClassNode> loadJrtModules(File javaHome) throws IOException {
+        List<Pattern> modulePatterns = new ArrayList<>();
+        List<String> configured = configuration.getRuntimeModules();
+        for (String glob : configured == null || configured.isEmpty() ? Collections.singletonList("java.*") : configured) {
+            modulePatterns.add(Pattern.compile("\\Q" + glob.replace("*", "\\E.*\\Q") + "\\E"));
+        }
+        Map<String, ClassNode> map = new HashMap<>();
+        FileSystem fs;
+        boolean closeFs = false;
+        if (javaHome == null) {
+            fs = FileSystems.getFileSystem(URI.create("jrt:/"));
+        } else {
+            fs = FileSystems.newFileSystem(URI.create("jrt:/"), Collections.singletonMap("java.home", javaHome.getAbsolutePath()));
+            closeFs = true;
+        }
+        try {
+            Path modules = fs.getPath("/modules");
+            List<Path> selected = new ArrayList<>();
+            try (Stream<Path> list = Files.list(modules)) {
+                list.filter(m -> {
+                    String name = m.getFileName().toString();
+                    return modulePatterns.stream().anyMatch(pat -> pat.matcher(name).matches());
+                }).forEach(selected::add);
+            }
+            for (Path module : selected) {
+                try (Stream<Path> walk = Files.walk(module)) {
+                    walk.filter(p -> p.toString().endsWith(".class") && !p.toString().endsWith("module-info.class")).forEach(p -> {
+                        try {
+                            ClassReader reader = new ClassReader(Files.readAllBytes(p));
+                            ClassNode node = new ClassNode();
+                            reader.accept(node, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                            map.put(node.name, node);
+                            setConstantPool(node, new ConstantPool(reader));
+                        } catch (Exception ex) {
+                            logger.warn("Could not load runtime class " + p, ex);
+                        }
+                    });
+                }
+            }
+            logger.info("Loaded {} runtime classes from {} module(s)", map.size(), selected.size());
+        } finally {
+            if (closeFs) {
+                fs.close();
+            }
+        }
+        return map;
+    }
+
+    private static boolean isModularJavaHome(File dir) {
+        return new File(dir, "lib" + File.separator + "modules").isFile();
+    }
+
+    private static boolean isLegacyJavaHome(File dir) {
+        return new File(dir, "lib" + File.separator + "rt.jar").isFile();
+    }
+
+    /**
+     * Loads a single {@code -path}/{@code -lib} entry. Accepted entries:
+     * <ul>
+     *     <li>a {@code .jar}/{@code .zip}/{@code .jmod} file</li>
+     *     <li>a JDK 9+ home directory (read through {@code jrt:/})</li>
+     *     <li>a JDK 8 home directory (reads {@code lib/rt.jar})</li>
+     *     <li>any other directory: every {@code .jar}/{@code .jmod}/{@code .zip} inside it</li>
+     * </ul>
+     */
+    private void loadClasspathEntry(File file, Map<String, ClassNode> target, boolean skipCode) throws IOException {
+        if (file.isFile()) {
+            target.putAll(loadClasspathFile(file, skipCode));
+        } else if (isModularJavaHome(file)) {
+            logger.info("Loading JDK runtime modules from {}", file);
+            target.putAll(loadJrtModules(file));
+        } else if (isLegacyJavaHome(file)) {
+            target.putAll(loadClasspathFile(new File(file, "lib" + File.separator + "rt.jar"), skipCode));
+        } else {
+            File[] files = file.listFiles(child -> child.getName().endsWith(".jar") || child.getName().endsWith(".jmod") || child.getName().endsWith(".zip"));
+            if (files != null) {
+                for (File child : files) {
+                    target.putAll(loadClasspathFile(child, skipCode));
+                }
+            }
+        }
     }
 
     private void loadClasspath() throws IOException {
         if (configuration.getPath() != null) {
             for (File file : configuration.getPath()) {
-                if (file.isFile()) {
-                    classpath.putAll(loadClasspathFile(file, true));
-                } else {
-                    File[] files = file.listFiles(child -> child.getName().endsWith(".jar"));
-                    if (files != null) {
-                        for (File child : files) {
-                            classpath.putAll(loadClasspathFile(child, true));
-                        }
-                    }
-                }
+                loadClasspathEntry(file, classpath, true);
             }
+        }
+        if (configuration.isLoadRuntime() && !classpath.containsKey("java/lang/Object")) {
+            logger.info("No Java runtime library supplied on the path, loading the modules of the running JVM (Java {})", Runtime.version().feature());
+            classpath.putAll(loadJrtModules(null));
         }
         if (configuration.getLibraries() != null) {
             for (File file : configuration.getLibraries()) {
-                if (file.isFile()) {
-                    libraries.putAll(loadClasspathFile(file, false));
-                } else {
-                    File[] files = file.listFiles(child -> child.getName().endsWith(".jar"));
-                    if (files != null) {
-                        for (File child : files) {
-                            libraries.putAll(loadClasspathFile(child, false));
-                        }
-                    }
-                }
+                loadClasspathEntry(file, libraries, false);
             }
         }
         classpath.putAll(libraries);

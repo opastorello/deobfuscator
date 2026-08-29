@@ -7,6 +7,14 @@ To download an updated version of Java Deobfuscator, go to the releases tab.
 
 If you would like to run this program with a GUI, go to https://github.com/java-deobfuscator/deobfuscator-gui and grab a download. Put the deobfuscator-gui.jar in the same folder as deobfuscator.jar.
 
+## Requirements
+
+* **Java 11 or newer** to run (tested on JDK 11, 17, 21, 22 and 25). Class files up to the newest Java release are supported (ASM 9.8).
+* No `rt.jar` needed: when the config does not put a Java runtime on `path`, the classes of the JVM running the deobfuscator are loaded automatically through `jrt:/`. You can still point `path` at a JDK home (8 or 9+), a `.jar`, a `.jmod` or a directory of them.
+* The transformers that run code inside the embedded `javavm` (Stringer, Zelix enhanced strings, Allatori/DashO strings, BisGuard, ...) still need a **Java 8** runtime image. Pass one with `-Ddeobfuscator.jre8=<path to JDK 8 / JRE 8>` (or the `DEOBFUSCATOR_JRE8` environment variable).
+
+Build from source with the bundled Maven wrapper: `./mvnw package` (`mvnw.cmd` on Windows). The jar ends up in `target/`.
+
 ## Quick Start
 
 * [Download](https://github.com/java-deobfuscator/deobfuscator/releases) the deobfuscator. The latest build is recommended.
@@ -58,8 +66,14 @@ The automagic detection should be able to recommend the transformers you'll need
 ## FAQs
 
 #### I got an error that says "Could not locate a class file"
-You need to specify all the JARs that the input file references. You'll almost always need to add `rt.jar`
-(which contains all the classes used by the Java Runtime)
+You need to specify all the JARs that the input file references on `path`. The Java runtime itself is loaded
+automatically from the running JVM (only the `java.*` modules; add `runtimeModules: ["java.*", "jdk.*"]` to
+the config to load everything, or `loadRuntime: false` to disable it and supply `rt.jar`/a JDK home yourself).
+
+#### I got an error that says "The embedded javavm requires a Java 8 runtime"
+The transformer you selected emulates the obfuscated code inside `javavm`, which only understands the Java 8
+class library. Install any JDK 8 / JRE 8 and run
+`java -Ddeobfuscator.jre8="C:\Program Files\Java\jre1.8.0_xxx" -jar deobfuscator.jar ...`
 
 #### I got an error that says "A StackOverflowError occurred during deobfuscation"
 Increase your stack size. For example, `java -Xss128m -jar deobfuscator.jar`

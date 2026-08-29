@@ -269,10 +269,82 @@ public class Utils {
 
     private static void initializeUnsafe() throws NoSuchMethodException, IllegalAccessException, InvocationTargetException, InstantiationException {
         if (unsafe == null) {
-            Constructor<Unsafe> ctor = Unsafe.class.getDeclaredConstructor();
-            ctor.setAccessible(true);
-            unsafe = ctor.newInstance();
+            try {
+                // sun.misc.Unsafe lives in jdk.unsupported (exported on JDK 9+); the static
+                // "theUnsafe" field is the conventional way to obtain the instance.
+                java.lang.reflect.Field field = Unsafe.class.getDeclaredField("theUnsafe");
+                field.setAccessible(true);
+                unsafe = (Unsafe) field.get(null);
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                Constructor<Unsafe> ctor = Unsafe.class.getDeclaredConstructor();
+                ctor.setAccessible(true);
+                unsafe = ctor.newInstance();
+            }
         }
+    }
+
+    /**
+     * Resolves an ASM {@link Type} to a runtime {@link Class}. Replaces the JDK-internal
+     * {@code sun.invoke.util.BytecodeDescriptor}, which is not accessible on JDK 9+.
+     */
+    public static Class<?> classForType(Type type, ClassLoader loader) throws ClassNotFoundException {
+        switch (type.getSort()) {
+            case Type.VOID:
+                return void.class;
+            case Type.BOOLEAN:
+                return boolean.class;
+            case Type.CHAR:
+                return char.class;
+            case Type.BYTE:
+                return byte.class;
+            case Type.SHORT:
+                return short.class;
+            case Type.INT:
+                return int.class;
+            case Type.FLOAT:
+                return float.class;
+            case Type.LONG:
+                return long.class;
+            case Type.DOUBLE:
+                return double.class;
+            case Type.ARRAY:
+                return Class.forName(type.getDescriptor().replace('/', '.'), false, loader);
+            default:
+                return Class.forName(type.getClassName(), false, loader);
+        }
+    }
+
+    /**
+     * @return the major class-file version supported by the running JVM (e.g. 65 for Java 21).
+     */
+    public static int runtimeClassFileVersion() {
+        return 44 + Runtime.version().feature();
+    }
+
+    public static byte[] parseHexBinary(String s) {
+        int len = s.length();
+        if (len % 2 != 0) {
+            throw new IllegalArgumentException("hexBinary needs to be even-length: " + s);
+        }
+        byte[] out = new byte[len / 2];
+        for (int i = 0; i < len; i += 2) {
+            int h = Character.digit(s.charAt(i), 16);
+            int l = Character.digit(s.charAt(i + 1), 16);
+            if (h == -1 || l == -1) {
+                throw new IllegalArgumentException("contains illegal character for hexBinary: " + s);
+            }
+            out[i / 2] = (byte) (h * 16 + l);
+        }
+        return out;
+    }
+
+    public static String printHexBinary(byte[] data) {
+        StringBuilder sb = new StringBuilder(data.length * 2);
+        for (byte b : data) {
+            sb.append(Character.toUpperCase(Character.forDigit((b >> 4) & 0xF, 16)));
+            sb.append(Character.toUpperCase(Character.forDigit(b & 0xF, 16)));
+        }
+        return sb.toString();
     }
 
     public static boolean isNumber(String type) {

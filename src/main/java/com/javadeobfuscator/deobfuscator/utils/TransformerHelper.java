@@ -245,19 +245,43 @@ public class TransformerHelper implements Opcodes {
         return map;
     }
 
+    /**
+     * Home of a Java 8 runtime used by the embedded {@code javavm} (which needs {@code rt.jar}).
+     * Resolved from the {@code deobfuscator.jre8} system property or the {@code DEOBFUSCATOR_JRE8} environment
+     * variable, falling back to the running JVM (only works when that JVM is Java 8).
+     */
+    public static File java8Home() {
+        String home = System.getProperty("deobfuscator.jre8");
+        if (home == null || home.isEmpty()) {
+            home = System.getenv("DEOBFUSCATOR_JRE8");
+        }
+        if (home == null || home.isEmpty()) {
+            home = System.getProperty("java.home");
+        }
+        File dir = new File(home);
+        if (!new File(dir, "lib" + File.separator + "rt.jar").isFile() && new File(dir, "jre" + File.separator + "lib" + File.separator + "rt.jar").isFile()) {
+            dir = new File(dir, "jre");
+        }
+        return dir;
+    }
+
     public static File javaLib(String name) {
-        return new File(System.getProperty("java.home") + File.separator + "lib" + File.separator + name);
+        return new File(java8Home(), "lib" + File.separator + name);
     }
 
     public static File javaLibExt(String name) {
-        return new File(System.getProperty("java.home") + File.separator + "lib" + File.separator + "ext" + File.separator + name);
+        return new File(java8Home(), "lib" + File.separator + "ext" + File.separator + name);
     }
 
     public static File javaLibSecurity(String name) {
-        return new File(System.getProperty("java.home") + File.separator + "lib" + File.separator + "security" + File.separator + name);
+        return new File(java8Home(), "lib" + File.separator + "security" + File.separator + name);
     }
 
     public static VirtualMachine newVirtualMachine(Transformer<?> transformer) {
+        if (!javaLib("rt.jar").isFile()) {
+            throw new IllegalStateException("The embedded javavm requires a Java 8 runtime (rt.jar). Running on Java "
+                    + Runtime.version().feature() + "; point -Ddeobfuscator.jre8=<path to JDK 8 / JRE 8> (or the DEOBFUSCATOR_JRE8 environment variable) to a Java 8 installation.");
+        }
         List<byte[]> jvmFiles = new ArrayList<>();
         jvmFiles.addAll(loadBytes(javaLib("rt.jar")));
         jvmFiles.addAll(loadBytes(javaLib("jce.jar")));

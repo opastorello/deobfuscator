@@ -38,6 +38,20 @@ public class Configuration {
     @JsonProperty
     private List<File> libraries;
 
+    /**
+     * When no entry on {@code path} provides {@code java/lang/Object}, automatically load the class library
+     * of the running JVM (through {@code jrt:/}). Set to {@code false} to require an explicit runtime on the path.
+     */
+    @JsonProperty
+    private boolean loadRuntime = true;
+
+    /**
+     * Module name globs to read when a JDK 9+ runtime is loaded (either automatically or from a JDK home on
+     * {@code path}). Defaults to {@code java.*}. Use e.g. {@code ["java.*", "jdk.*"]} to load everything.
+     */
+    @JsonProperty
+    private List<String> runtimeModules;
+
     @JsonProperty
     private List<String> ignoredClasses;
 
@@ -156,6 +170,22 @@ public class Configuration {
 
     public void setSmartRedo(boolean smartRedo) {
         this.smartRedo = smartRedo;
+    }
+
+    public List<String> getRuntimeModules() {
+        return runtimeModules;
+    }
+
+    public void setRuntimeModules(List<String> runtimeModules) {
+        this.runtimeModules = runtimeModules;
+    }
+
+    public boolean isLoadRuntime() {
+        return loadRuntime;
+    }
+
+    public void setLoadRuntime(boolean loadRuntime) {
+        this.loadRuntime = loadRuntime;
     }
 
     public boolean isParamorphism() {

@@ -23,7 +23,6 @@ import com.javadeobfuscator.deobfuscator.executor.values.JavaValue;
 import org.objectweb.asm.Type;
 import com.javadeobfuscator.deobfuscator.utils.Utils;
 import org.objectweb.asm.tree.ClassNode;
-import sun.invoke.util.BytecodeDescriptor;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -55,9 +54,11 @@ public class ReflectiveProvider implements Provider {
         Class<?>[] clazzes;
         try {
             targetClass = Class.forName(className.replace("/", "."));
-            List<Class<?>> l = BytecodeDescriptor.parseMethod(methodDesc, ClassLoader.getSystemClassLoader());
-            l.remove(l.size() - 1);
-            clazzes = l.toArray(new Class<?>[0]);
+            Type[] argTypes = Type.getArgumentTypes(methodDesc);
+            clazzes = new Class<?>[argTypes.length];
+            for (int i = 0; i < argTypes.length; i++) {
+                clazzes[i] = Utils.classForType(argTypes[i], ClassLoader.getSystemClassLoader());
+            }
         } catch (Throwable e) {
             throw new ExecutionException(e);
         }

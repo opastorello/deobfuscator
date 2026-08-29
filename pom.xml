@@ -6,8 +6,12 @@
     <version>1.0.0</version>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <version.asm>9.5</version.asm>
+        <maven.compiler.release>11</maven.compiler.release>
+        <version.asm>9.8</version.asm>
         <version.dude>1.10.2</version.dude>
+        <version.javavm>12e219644f</version.javavm>
+        <version.jackson>2.18.3</version.jackson>
+        <version.slf4j>2.0.17</version.slf4j>
     </properties>
     <build>
         <sourceDirectory>src/main/java</sourceDirectory>
@@ -29,20 +33,18 @@
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.10.1</version>
+                <version>3.13.0</version>
                 <configuration>
-                    <source>1.8</source>
-                    <target>1.8</target>
+                    <release>${maven.compiler.release}</release>
                     <compilerArgs>
-                        <arg>-XDignore.symbol.file</arg>
+                        <arg>-Xlint:-options</arg>
                     </compilerArgs>
-                    <fork>true</fork>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.3.0</version>
+                <version>3.6.0</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -56,12 +58,29 @@
                                     <include>*:*</include>
                                 </includes>
                             </artifactSet>
-                            <relocations>
-                                <!--<relocation>
-                                    <pattern>org.objectweb.asm</pattern>
-                                    <shadedPattern>com.javadeobfuscator.org.objectweb.asm</shadedPattern>
-                                </relocation>-->
-                            </relocations>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.javadeobfuscator.deobfuscator.DeobfuscatorMain</mainClass>
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                        <Add-Opens>java.base/java.lang java.base/java.lang.reflect java.base/java.lang.invoke java.base/java.util java.base/java.io java.base/java.nio java.base/java.security java.base/sun.nio.ch java.base/jdk.internal.misc java.base/jdk.internal.reflect</Add-Opens>
+                                        <Add-Exports>java.base/jdk.internal.misc java.base/sun.invoke.util</Add-Exports>
+                                    </manifestEntries>
+                                </transformer>
+                            </transformers>
                         </configuration>
                     </execution>
                 </executions>
@@ -69,22 +88,50 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>3.2.2</version>
+                <version>3.4.2</version>
                 <configuration>
                     <archive>
                         <manifest>
                             <mainClass>com.javadeobfuscator.deobfuscator.DeobfuscatorMain</mainClass>
                         </manifest>
+                        <manifestEntries>
+                            <Add-Opens>java.base/java.lang java.base/java.lang.reflect java.base/java.lang.invoke java.base/java.util java.base/java.io java.base/java.nio java.base/java.security java.base/sun.nio.ch java.base/jdk.internal.misc java.base/jdk.internal.reflect</Add-Opens>
+                            <Add-Exports>java.base/jdk.internal.misc java.base/sun.invoke.util</Add-Exports>
+                        </manifestEntries>
                     </archive>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.3</version>
+                <configuration>
+                    <argLine>--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/java.security=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-jdk</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[11,)</version>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
     <repositories>
-        <repository>
-            <id>java-deobfuscator-repository</id>
-            <url>https://repo.samczsun.com/repository/java-deobfuscator</url>
-        </repository>
         <repository>
             <id>jitpack.io</id>
             <url>https://jitpack.io</url>
@@ -95,17 +142,17 @@
         <dependency>
             <groupId>commons-cli</groupId>
             <artifactId>commons-cli</artifactId>
-            <version>1.5.0</version>
+            <version>1.9.0</version>
         </dependency>
         <dependency>
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
-            <version>2.11.0</version>
+            <version>2.19.0</version>
         </dependency>
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
-            <version>31.1-jre</version>
+            <version>33.4.8-jre</version>
         </dependency>
         <dependency>
             <groupId>org.jooq</groupId>
@@ -115,49 +162,44 @@
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
-            <version>2.9.0</version>
+            <version>2.13.1</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
-            <version>2.13.4</version>
+            <version>${version.jackson}</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.13.4.1</version>
+            <version>${version.jackson}</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
-            <version>2.13.4</version>
+            <version>${version.jackson}</version>
         </dependency>
         <!-- override vulnerable version in transitive dependency in jackson-dataformat-yaml -->
         <dependency>
             <groupId>org.yaml</groupId>
             <artifactId>snakeyaml</artifactId>
-            <version>1.32</version>
+            <version>2.4</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>1.8.0-beta4</version>
+            <version>${version.slf4j}</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
-            <version>1.8.0-beta4</version>
+            <version>${version.slf4j}</version>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>4.13.2</version>
             <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>javax.xml.bind</groupId>
-            <artifactId>jaxb-api</artifactId>
-            <version>2.3.1</version>
         </dependency>
 
         <!-- ASM related dependencies -->
@@ -187,11 +229,13 @@
             <version>${version.asm}</version>
         </dependency>
 
-        <!-- needs to be very late in the pom as it got a bunch of old stuff shaded inside -->
+        <!-- needs to be very late in the pom as it got a bunch of old stuff shaded inside.
+             Built by JitPack from github.com/java-deobfuscator/javavm (the original repo.samczsun.com is gone);
+             the version is a pinned commit hash. -->
         <dependency>
-            <groupId>com.javadeobfuscator</groupId>
+            <groupId>com.github.java-deobfuscator</groupId>
             <artifactId>javavm</artifactId>
-            <version>3.0.0</version>
+            <version>${version.javavm}</version>
         </dependency>
 
         <dependency>

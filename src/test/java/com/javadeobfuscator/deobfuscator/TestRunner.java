@@ -31,25 +31,19 @@ public class TestRunner {
     @Before
     public void setup() {
         try {
-            File input = new File(System.getProperty("java.home") + File.separator + "lib" + File.separator + "rt.jar");
-
-            ZipFile zipIn = new ZipFile(input);
-            Enumeration<? extends ZipEntry> e = zipIn.entries();
-            while (e.hasMoreElements()) {
-                ZipEntry next = e.nextElement();
-                if (next.getName().endsWith(".class")) {
+            java.nio.file.FileSystem fs = java.nio.file.FileSystems.getFileSystem(java.net.URI.create("jrt:/"));
+            try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(fs.getPath("/modules/java.base"))) {
+                walk.filter(p -> p.toString().endsWith(".class") && !p.toString().endsWith("module-info.class")).forEach(p -> {
                     try {
-                        InputStream in = zipIn.getInputStream(next);
-                        ClassReader reader = new ClassReader(in);
+                        ClassReader reader = new ClassReader(java.nio.file.Files.readAllBytes(p));
                         ClassNode node = new ClassNode();
-                        reader.accept(node, ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
+                        reader.accept(node, ClassReader.SKIP_CODE | ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
                         jre.put(node.name, node);
-                    } catch (IllegalArgumentException x) {
-                        System.out.println("Could not parse " + next.getName() + " (is it a class?)");
+                    } catch (IOException | IllegalArgumentException x) {
+                        System.out.println("Could not parse " + p + " (is it a class?)");
                     }
-                }
+                });
             }
-            zipIn.close();
         } catch (IOException e) {
             e.printStackTrace(System.out);
         }

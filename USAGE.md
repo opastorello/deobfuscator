@@ -7,11 +7,11 @@ public class SomeRandomDeobfuscator {
         Configuration config = new Configuration();
         config.setInput(new File("input.jar"));
         config.setOutput(new File("output.jar"));
+        // Optional: libraries referenced by the input. The Java runtime of the current JVM is loaded
+        // automatically (jrt:/); a JDK home (8 or 9+), .jar, .jmod or a directory of them is also accepted.
         config.setPath(Arrays.asList(
-                new File("C:\\Program Files\\Java\\jdk_8\\jre\\lib\\rt.jar"),
-                new File("C:\\Program Files\\Java\\jdk_8\\jre\\lib\\jce.jar"),
-                new File("C:\\Program Files\\Java\\jdk_8\\jre\\lib\\ext\\jfxrt.jar"),
-                new File("C:\\Program Files\\Java\\jdk_8\\lib\\tools.jar")
+                new File("libs"),
+                new File("C:\\Program Files\\Java\\jdk-21")   // explicit runtime, overrides the automatic one
         ));
         config.setTransformers(Arrays.asList(
                 TransformerConfig.configFor(PeepholeOptimizer.class)

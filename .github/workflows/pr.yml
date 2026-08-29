@@ -1,6 +1,4 @@
-# This workflow will build a Java project with Maven
-# For more information see: https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-maven
-
+# Builds and tests the project on every supported JDK (11 through 22, plus the newest GA release).
 name: PR integration check
 
 on: [pull_request]
@@ -8,20 +6,18 @@ on: [pull_request]
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [ '11', '17', '21', '22', '25' ]
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up JDK 8
-      uses: actions/setup-java@v2
+    - uses: actions/checkout@v4
+    - name: Set up JDK ${{ matrix.java }}
+      uses: actions/setup-java@v4
       with:
-        java-version: '8'
-        distribution: 'adopt'
-    - name: Cache local Maven repository
-      uses: actions/cache@v2
-      with:
-        path: ~/.m2/repository
-        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-        restore-keys: |
-          ${{ runner.os }}-maven-
+        java-version: ${{ matrix.java }}
+        distribution: 'temurin'
+        cache: 'maven'
     - name: Build with Maven
-      run: mvn -B package --file pom.xml
+      run: ./mvnw -B verify --file pom.xml
