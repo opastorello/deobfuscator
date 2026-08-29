@@ -25,6 +25,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 
 /**
@@ -61,6 +62,11 @@ public class SandboxStringTransformer extends Transformer<SandboxStringTransform
 
     @Override
     public boolean transform() throws Throwable {
+        Pattern ownerFilter = getConfig().getOwnerFilter() == null ? null : Pattern.compile(getConfig().getOwnerFilter());
+        if (getConfig().isDryRun()) {
+            analyzeDryRun(ownerFilter);
+            return false;
+        }
         List<File> cp = new ArrayList<>();
         cp.add(getDeobfuscator().getConfig().getInput());
         addJars(cp, getDeobfuscator().getConfig().getLibraries());
@@ -69,7 +75,6 @@ public class SandboxStringTransformer extends Transformer<SandboxStringTransform
             cp.addAll(getConfig().getExtraClasspath());
         }
         sandbox = new SandboxExecutor(cp, getConfig().getJava(), getConfig().getTimeoutMillis(), getConfig().getMaxHeapMb(), getConfig().getJvmArgs());
-        Pattern ownerFilter = getConfig().getOwnerFilter() == null ? null : Pattern.compile(getConfig().getOwnerFilter());
         try {
             if (getConfig().isStaticFields()) {
                 transformStaticFields(ownerFilter);
@@ -98,6 +103,110 @@ public class SandboxStringTransformer extends Transformer<SandboxStringTransform
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------ dry run: report coverage, touch nothing
+
+    /**
+     * Reports how many static-field pools and {@code INVOKESTATIC} decrypt calls would be resolved by this
+     * transformer, without starting the sandbox, executing a single instruction of the input, or modifying any
+     * bytecode. Safe to run on inputs you do not want to (or cannot) actually execute.
+     */
+    private void analyzeDryRun(Pattern ownerFilter) {
+        Set<String> writtenOutsideClinit = new HashSet<>();
+        for (ClassNode cn : classNodes()) {
+            for (MethodNode mn : cn.methods) {
+                if (mn.name.equals("<clinit>")) {
+                    continue;
+                }
+                for (AbstractInsnNode ain : mn.instructions) {
+                    if (ain.getOpcode() == PUTSTATIC) {
+                        FieldInsnNode fin = (FieldInsnNode) ain;
+                        writtenOutsideClinit.add(fin.owner + "." + fin.name);
+                    }
+                }
+            }
+        }
+
+        int clinitStringFields = 0, clinitStringArrayFields = 0;
+        for (ClassNode cn : classNodes()) {
+            if (ownerFilter != null && !ownerFilter.matcher(cn.name).matches()) {
+                continue;
+            }
+            MethodNode clinit = cn.methods.stream().filter(m -> m.name.equals("<clinit>")).findFirst().orElse(null);
+            if (clinit == null) {
+                continue;
+            }
+            for (AbstractInsnNode ain : clinit.instructions) {
+                if (ain.getOpcode() != PUTSTATIC) {
+                    continue;
+                }
+                FieldInsnNode fin = (FieldInsnNode) ain;
+                if (!fin.owner.equals(cn.name) || writtenOutsideClinit.contains(fin.owner + "." + fin.name)) {
+                    continue;
+                }
+                if (fin.desc.equals("Ljava/lang/String;")) {
+                    clinitStringFields++;
+                } else if (fin.desc.equals("[Ljava/lang/String;")) {
+                    clinitStringArrayFields++;
+                }
+            }
+        }
+
+        int constCallSites = 0, callerSensitiveSites = 0, nonConstCallSites = 0;
+        Set<String> constDecryptMethods = new HashSet<>();
+        Set<String> callerSensitiveMethods = new HashSet<>();
+        Map<Integer, Integer> argHisto = new TreeMap<>();
+
+        for (ClassNode cn : classNodes()) {
+            for (MethodNode mn : cn.methods) {
+                for (AbstractInsnNode ain = mn.instructions.getFirst(); ain != null; ain = ain.getNext()) {
+                    if (ain.getOpcode() != INVOKESTATIC) {
+                        continue;
+                    }
+                    MethodInsnNode min = (MethodInsnNode) ain;
+                    ClassNode owner = classes.get(min.owner);
+                    if (owner == null || !Type.getReturnType(min.desc).getDescriptor().equals("Ljava/lang/String;")) {
+                        continue;
+                    }
+                    if (ownerFilter != null && !ownerFilter.matcher(min.owner).matches()) {
+                        continue;
+                    }
+                    Type[] argTypes = Type.getArgumentTypes(min.desc);
+                    if (argTypes.length > getConfig().getMaxArgs()) {
+                        continue;
+                    }
+                    MethodNode target = owner.methods.stream().filter(m -> m.name.equals(min.name) && m.desc.equals(min.desc)).findFirst().orElse(null);
+                    if (target == null || (target.access & ACC_STATIC) == 0) {
+                        continue;
+                    }
+                    String key = min.owner + "." + min.name + min.desc;
+                    Object[] args = new Object[argTypes.length];
+                    List<AbstractInsnNode> argInsns = new ArrayList<>();
+                    if (collectConstantArgs(ain, argTypes, args, argInsns)) {
+                        constCallSites++;
+                        constDecryptMethods.add(key);
+                        argHisto.merge(argTypes.length, 1, Integer::sum);
+                        if (isCallerSensitive(owner, target, new HashSet<>())) {
+                            callerSensitiveSites++;
+                            callerSensitiveMethods.add(key);
+                        }
+                    } else {
+                        nonConstCallSites++;
+                    }
+                }
+            }
+        }
+
+        logger.info("[SandboxStringTransformer] Dry run: no code was executed and no bytecode was modified");
+        logger.info("[SandboxStringTransformer]   <clinit> static String field(s):        {}", clinitStringFields);
+        logger.info("[SandboxStringTransformer]   <clinit> static String[] pool field(s): {}", clinitStringArrayFields);
+        logger.info("[SandboxStringTransformer]   INVOKESTATIC->String call site(s) with constant args (resolvable today): {} ({} distinct decryptor signature(s))",
+                constCallSites, constDecryptMethods.size());
+        logger.info("[SandboxStringTransformer]     of which caller-sensitive, resolved via trampoline: {} ({} method(s))",
+                callerSensitiveSites, callerSensitiveMethods.size());
+        logger.info("[SandboxStringTransformer]   INVOKESTATIC->String call site(s) with a non-constant argument (NOT resolvable today): {}", nonConstCallSites);
+        logger.info("[SandboxStringTransformer]   argument-count histogram of resolvable call sites: {}", argHisto);
     }
 
     // ------------------------------------------------------------------ pattern 1: static fields
@@ -446,6 +555,7 @@ public class SandboxStringTransformer extends Transformer<SandboxStringTransform
     }
 
     public static class Config extends TransformerConfig {
+        private boolean dryRun = false;
         private boolean staticFields = true;
         private boolean methodCalls = true;
         private boolean removeDecryptors = true;
@@ -459,6 +569,19 @@ public class SandboxStringTransformer extends Transformer<SandboxStringTransform
 
         public Config() {
             super(SandboxStringTransformer.class);
+        }
+
+        /**
+         * When {@code true}, only report how many static-field pools and decrypt call sites would be resolved
+         * (see the log output); the sandbox is never started, the input's code never runs and no class is
+         * modified. Use this to gauge coverage on inputs you are not ready to (or should not) actually execute.
+         */
+        public boolean isDryRun() {
+            return dryRun;
+        }
+
+        public void setDryRun(boolean dryRun) {
+            this.dryRun = dryRun;
         }
 
         public boolean isStaticFields() {

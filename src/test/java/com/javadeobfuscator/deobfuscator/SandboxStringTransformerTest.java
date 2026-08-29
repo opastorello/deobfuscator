@@ -83,11 +83,9 @@ public class SandboxStringTransformerTest {
             + "    }\n"
             + "}\n";
 
-    @Test
-    public void resolvesStringsByExecutingThem() throws Throwable {
+    private File buildSample(Path work) throws Exception {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         assertNotNull("test needs a JDK", compiler);
-        Path work = java.nio.file.Paths.get("target", "sandbox-test");
         if (Files.exists(work)) {
             try (Stream<Path> old = Files.walk(work)) {
                 old.sorted(java.util.Comparator.reverseOrder()).forEach(q -> q.toFile().delete());
@@ -117,6 +115,13 @@ public class SandboxStringTransformerTest {
                 jar.closeEntry();
             }
         }
+        return input;
+    }
+
+    @Test
+    public void resolvesStringsByExecutingThem() throws Throwable {
+        Path work = java.nio.file.Paths.get("target", "sandbox-test");
+        File input = buildSample(work);
         File output = work.resolve("output.jar").toFile();
 
         Configuration config = new Configuration();
@@ -148,6 +153,48 @@ public class SandboxStringTransformerTest {
 
         ClassNode decrypt = read(output, "sample/Decrypt.class");
         assertTrue("unreferenced decryptor removed", decrypt.methods.stream().noneMatch(m -> m.name.equals("cs")));
+    }
+
+    @Test
+    public void dryRunReportsCoverageWithoutRunningOrModifyingAnything() throws Throwable {
+        Path work = java.nio.file.Paths.get("target", "sandbox-dryrun-test");
+        File input = buildSample(work);
+        File output = work.resolve("output.jar").toFile();
+
+        SandboxStringTransformer.Config transformerConfig = (SandboxStringTransformer.Config) TransformerConfig.configFor(SandboxStringTransformer.class);
+        transformerConfig.setDryRun(true);
+        // If dry run ever tried to actually execute something, pointing "java" at a non-existent
+        // executable would make that attempt fail loudly instead of silently succeeding.
+        transformerConfig.setJava(new File(work.toFile(), "no-such-java-executable").getAbsolutePath());
+
+        Configuration config = new Configuration();
+        config.setInput(input);
+        config.setOutput(output);
+        config.setTransformers(Collections.singletonList(transformerConfig));
+        new Deobfuscator(config).start();
+        assertTrue(output.isFile());
+
+        // The deobfuscator always re-serializes every class through ASM's ClassWriter when writing the output
+        // (it recomputes stack map frames unconditionally), so byte-for-byte equality is not the right check even
+        // when nothing was transformed. Instead assert the semantic invariant: dry run must not resolve anything.
+        ClassNode decrypt = read(output, "sample/Decrypt.class");
+        assertTrue("dry run must not remove any decryptor method", decrypt.methods.stream().anyMatch(m -> m.name.equals("cs")));
+
+        ClassNode main = read(output, "sample/Main.class");
+        MethodNode mainMethod = main.methods.stream().filter(m -> m.name.equals("main")).findFirst().orElseThrow(AssertionError::new);
+        List<String> ldcs = new ArrayList<>();
+        boolean callsDecrypt = false;
+        for (AbstractInsnNode ain : mainMethod.instructions) {
+            if (ain instanceof LdcInsnNode && ((LdcInsnNode) ain).cst instanceof String) {
+                ldcs.add((String) ((LdcInsnNode) ain).cst);
+            } else if (ain instanceof MethodInsnNode && ((MethodInsnNode) ain).owner.equals("sample/Decrypt")) {
+                callsDecrypt = true;
+            }
+        }
+        assertTrue("dry run must not remove the decrypt calls", callsDecrypt);
+        // "hello sandbox" only ever appears as the *result* of Decrypt.d(0, 13); unlike "allatori" (an input
+        // literal already present in the source), it can only show up here if something actually decrypted it.
+        assertFalse("dry run must not resolve any string", ldcs.contains("hello sandbox"));
     }
 
     private static ClassNode read(File jar, String entry) throws IOException {

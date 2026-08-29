@@ -45,7 +45,26 @@ transformers:
       # java: C:/jdks/jdk-22/bin/java  # optional: run the sandbox on another JDK
 ```
 
-**The obfuscated code really runs.** The sandbox is a child process with a throw-away home/temp directory, a heap cap,
+### Dry run
+
+Set `dryRun: true` to find out how much of the input this transformer *would* resolve without starting the
+sandbox, executing a single instruction of the input, or modifying any class. Useful to gauge coverage before
+deciding whether to actually run it, especially on inputs you are not ready to execute:
+
+```yaml
+input: input.jar
+detect: true               # dry run doesn't need an output; pair it with detect or an empty transformers-only config
+transformers:
+  - general.SandboxStringTransformer:
+      dryRun: true
+```
+
+The log reports, purely from static analysis: how many `<clinit>`-initialised static `String`/`String[]` fields
+exist, how many `INVOKESTATIC` calls returning `String` have all-constant arguments (what a real run would resolve)
+versus non-constant arguments (what it can't, today), how many of those are caller-sensitive, and an argument-count
+histogram of the resolvable call sites.
+
+**The obfuscated code really runs (unless `dryRun` is set).** The sandbox is a child process with a throw-away home/temp directory, a heap cap,
 a per-call timeout and (on JDK 11-23) a `SecurityManager` that blocks network, file writes, process execution and
 `System.exit`. On JDK 24+ the security manager no longer exists and only the process isolation remains. Only use it on
 inputs you are entitled to analyse, and preferably not on a machine holding anything sensitive.
