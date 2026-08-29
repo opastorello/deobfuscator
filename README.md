@@ -1,5 +1,11 @@
 # Deobfuscator
- 
+
+> **Maintained fork.** The original [java-deobfuscator/deobfuscator](https://github.com/java-deobfuscator/deobfuscator)
+> is no longer maintained (last release targets Java 8 and its dependency repository is offline). This fork keeps the
+> project alive in 2026: it builds and runs on **JDK 11 through 22+**, uses ASM 9.8 (reads class files up to the latest
+> Java release), ships a Maven wrapper, and loads the Java runtime automatically through  (no  required).
+> Issues and pull requests are welcome here.
+
 This project aims to deobfuscate most commercially-available obfuscators for Java.
 
 ## Updates
