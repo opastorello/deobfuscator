@@ -21,6 +21,35 @@ If you would like to run this program with a GUI, go to https://github.com/java-
 
 Build from source with the bundled Maven wrapper: `./mvnw package` (`mvnw.cmd` on Windows). The jar ends up in `target/`.
 
+## Sandbox string decryption (any obfuscator, any Java version)
+
+`general.SandboxStringTransformer` is the recommended way to recover encrypted strings from modern inputs.
+Instead of emulating the decryption routines with the Java 8-only `javavm`, it **executes them in a separate,
+isolated JVM process** (the same JDK that runs the deobfuscator, so Java 11-25 class files, records,
+`invokedynamic` string concatenation, `MethodHandles`, ... all just work) and patches the results back as constants:
+
+* strings / `String[]` pools decrypted in `<clinit>` and stored in static fields (Zelix, Stringer, ...);
+* `INVOKESTATIC` decrypt calls with constant arguments: `(II)String`, `(String)String`, `(J)String`, ... (Zelix, Allatori, DashO, Paramorphism, custom);
+* decryptors that inspect the call stack (Zelix "caller-sensitive" mode) are invoked through a trampoline that carries the original caller's name;
+* decryptor methods left without callers are removed.
+
+```yaml
+input: input.jar
+output: output.jar
+transformers:
+  - general.SandboxStringTransformer:
+      timeoutMillis: 10000      # per call; the sandbox JVM is restarted on timeout/crash
+      maxHeapMb: 512
+      removeDecryptors: true
+      ownerFilter: "com/example/.*"   # optional regex: only execute decryptors declared in matching classes
+      # java: C:/jdks/jdk-22/bin/java  # optional: run the sandbox on another JDK
+```
+
+**The obfuscated code really runs.** The sandbox is a child process with a throw-away home/temp directory, a heap cap,
+a per-call timeout and (on JDK 11-23) a `SecurityManager` that blocks network, file writes, process execution and
+`System.exit`. On JDK 24+ the security manager no longer exists and only the process isolation remains. Only use it on
+inputs you are entitled to analyse, and preferably not on a machine holding anything sensitive.
+
 ## Quick Start
 
 * [Download](https://github.com/java-deobfuscator/deobfuscator/releases) the deobfuscator. The latest build is recommended.
@@ -80,6 +109,10 @@ the config to load everything, or `loadRuntime: false` to disable it and supply 
 The transformer you selected emulates the obfuscated code inside `javavm`, which only understands the Java 8
 class library. Install any JDK 8 / JRE 8 and run
 `java -Ddeobfuscator.jre8="C:\Program Files\Java\jre1.8.0_xxx" -jar deobfuscator.jar ...`
+
+#### I got an `OutOfMemoryError: Java heap space`
+Every class of the input is kept in memory. Large inputs (tens of thousands of classes) need a bigger heap, e.g.
+`java -Xmx6g -jar deobfuscator.jar`.
 
 #### I got an error that says "A StackOverflowError occurred during deobfuscation"
 Increase your stack size. For example, `java -Xss128m -jar deobfuscator.jar`
