@@ -73,7 +73,7 @@ public class SandboxStringTransformerTest {
     private static final String MAIN = ""
             + "package sample;\n"
             + "public class Main {\n"
-            + "    record R(String a, int b) {}\n"
+            + "    RECORD_DECL\n"
             + "    public static void main(String[] args) {\n"
             + "        String x = Decrypt.d(0, 13);\n"
             + "        String y = Decrypt.a(Decrypt.a(\"allatori\"));\n"
@@ -98,7 +98,12 @@ public class SandboxStringTransformerTest {
         Files.createDirectories(src);
         Files.write(src.resolve("Decrypt.java"), DECRYPT.getBytes(StandardCharsets.UTF_8));
         Files.write(src.resolve("Pool.java"), POOL.getBytes(StandardCharsets.UTF_8));
-        Files.write(src.resolve("Main.java"), MAIN.getBytes(StandardCharsets.UTF_8));
+        // records need javac 16+; on older JDKs the sample uses a plain class with the same toString()
+        boolean records = Runtime.version().feature() >= 16;
+        String mainSource = MAIN.replace("RECORD_DECL", records
+                ? "record R(String a, int b) {}"
+                : "static class R { final String a; final int b; R(String a, int b) { this.a = a; this.b = b; } public String toString() { return \"R[a=\" + a + \", b=\" + b + \"]\"; } }");
+        Files.write(src.resolve("Main.java"), mainSource.getBytes(StandardCharsets.UTF_8));
         Path classes = Files.createDirectories(work.resolve("classes"));
         int rc = compiler.run(null, null, null, "-d", classes.toString(),
                 src.resolve("Decrypt.java").toString(), src.resolve("Pool.java").toString(), src.resolve("Main.java").toString());
